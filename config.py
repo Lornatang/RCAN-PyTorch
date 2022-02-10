@@ -45,14 +45,14 @@ if mode == "train":
     resume_weight = ""
 
     # Total num epochs
-    epochs = 300
+    epochs = 500
 
     # Adam optimizer parameter
     model_lr = 1e-4
     model_betas = (0.9, 0.999)
 
     # StepLR scheduler parameter
-    lr_scheduler_step_size = epochs // 3
+    lr_scheduler_step_size = epochs // 5
     lr_scheduler_gamma = 0.5
 
     print_frequency = 500
