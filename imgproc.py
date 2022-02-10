@@ -208,16 +208,19 @@ def random_crop(lr: Any, hr: Any, image_size: int, upscale_factor: int) -> [Any,
     return lr, hr
 
 
-def random_rotate(lr: Any, hr: Any, angle: int) -> [Any, Any]:
+def random_rotate(lr: Any, hr: Any, degrees: list) -> [Any, Any]:
     """Will ``PIL.Image`` randomly rotate the image.
+
     Args:
         lr: Low-resolution image data read by ``PIL.Image``.
         hr: High-resolution image data read by ``PIL.Image``.
-        angle (int): rotation angle, clockwise and counterclockwise rotation.
+        degrees (list): rotation angle, clockwise and counterclockwise rotation.
+
     Returns:
         Randomly rotated low-resolution images and high-resolution images.
     """
-    angle = random.choice((+angle, -angle))
+
+    angle = random.choice(degrees)
     lr = F.rotate(lr, angle)
     hr = F.rotate(hr, angle)
 
@@ -226,13 +229,16 @@ def random_rotate(lr: Any, hr: Any, angle: int) -> [Any, Any]:
 
 def random_horizontally_flip(lr: Any, hr: Any, p=0.5) -> [Any, Any]:
     """Flip the ``PIL.Image`` image horizontally randomly.
+
     Args:
         lr: Low-resolution image data read by ``PIL.Image``.
         hr: High-resolution image data read by ``PIL.Image``.
         p (optional, float): rollover probability. (Default: 0.5)
+
     Returns:
         Low-resolution image and high-resolution image after random horizontal flip.
     """
+
     if torch.rand(1).item() > p:
         lr = F.hflip(lr)
         hr = F.hflip(hr)
@@ -242,13 +248,16 @@ def random_horizontally_flip(lr: Any, hr: Any, p=0.5) -> [Any, Any]:
 
 def random_vertically_flip(lr: Any, hr: Any, p=0.5) -> [Any, Any]:
     """Turn the ``PIL.Image`` image upside down randomly.
+    
     Args:
         lr: Low-resolution image data read by ``PIL.Image``.
         hr: High-resolution image data read by ``PIL.Image``.
         p (optional, float): rollover probability. (Default: 0.5)
+        
     Returns:
         Randomly rotated up and down low-resolution images and high-resolution images.
     """
+
     if torch.rand(1).item() > p:
         lr = F.vflip(lr)
         hr = F.vflip(hr)
@@ -258,12 +267,15 @@ def random_vertically_flip(lr: Any, hr: Any, p=0.5) -> [Any, Any]:
 
 def random_adjust_brightness(lr: Any, hr: Any) -> [Any, Any]:
     """Set ``PIL.Image`` to randomly adjust the image brightness.
+    
     Args:
         lr: Low-resolution image data read by ``PIL.Image``.
         hr: High-resolution image data read by ``PIL.Image``.
+        
     Returns:
         Low-resolution image and high-resolution image with randomly adjusted brightness.
     """
+
     # Randomly adjust the brightness gain range.
     factor = random.uniform(0.5, 2)
     lr = F.adjust_brightness(lr, factor)
@@ -274,12 +286,15 @@ def random_adjust_brightness(lr: Any, hr: Any) -> [Any, Any]:
 
 def random_adjust_contrast(lr: Any, hr: Any) -> [Any, Any]:
     """Set ``PIL.Image`` to randomly adjust the image contrast.
+    
     Args:
         lr: Low-resolution image data read by ``PIL.Image``.
         hr: High-resolution image data read by ``PIL.Image``.
+        
     Returns:
         Low-resolution image and high-resolution image with randomly adjusted contrast.
     """
+
     # Randomly adjust the contrast gain range.
     factor = random.uniform(0.5, 2)
     lr = F.adjust_contrast(lr, factor)
