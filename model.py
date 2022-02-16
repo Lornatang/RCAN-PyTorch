@@ -27,7 +27,7 @@ class ChannelAttentionLayer(nn.Module):
 
     def __init__(self, channel: int, reduction: int):
         super(ChannelAttentionLayer, self).__init__()
-        self.ca_layer = nn.Sequential(
+        self.channel_attention_layer = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(channel, channel // reduction, (1, 1), (1, 1), (0, 0)),
             nn.ReLU(True),
@@ -38,7 +38,7 @@ class ChannelAttentionLayer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         identity = x
 
-        out = self.ca_layer(x)
+        out = self.channel_attention_layer(x)
 
         out = torch.mul(out, identity)
 
@@ -50,7 +50,7 @@ class ResidualChannelAttentionBlock(nn.Module):
 
     def __init__(self, channel: int, reduction: int):
         super(ResidualChannelAttentionBlock, self).__init__()
-        self.rca_block = nn.Sequential(
+        self.residual_channel_attention_block = nn.Sequential(
             nn.Conv2d(channel, channel, (3, 3), (1, 1), (1, 1)),
             nn.ReLU(True),
             nn.Conv2d(channel, channel, (3, 3), (1, 1), (1, 1)),
@@ -60,7 +60,7 @@ class ResidualChannelAttentionBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         identity = x
 
-        out = self.rca_block(x)
+        out = self.residual_channel_attention_block(x)
 
         out = torch.add(out, identity)
 
@@ -90,6 +90,20 @@ class ResidualGroup(nn.Module):
         return out
 
 
+class UpsampleBlock(nn.Module):
+    def __init__(self, channels: int, upscale_factor: int) -> None:
+        super(UpsampleBlock, self).__init__()
+        self.upsample_block = nn.Sequential(
+            nn.Conv2d(channels, channels * upscale_factor * upscale_factor, (3, 3), (1, 1), (1, 1)),
+            nn.PixelShuffle(upscale_factor),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.upsample_block(x)
+
+        return out
+
+
 class RCAN(nn.Module):
     def __init__(self, upscale_factor: int):
         super(RCAN, self).__init__()
@@ -107,28 +121,21 @@ class RCAN(nn.Module):
 
         # Upsampling layers
         upsampling = []
-        if upscale_factor == 2 or upscale_factor == 4 or upscale_factor == 8:
+        if upscale_factor == 2 or upscale_factor == 4:
             for _ in range(int(math.log(upscale_factor, 2))):
-                upsampling += [
-                    nn.Conv2d(64, 256, (3, 3), (1, 1), (1, 1)),
-                    nn.PixelShuffle(2),
-                ]
+                upsampling.append(UpsampleBlock(64, 2))
         elif upscale_factor == 3:
-            upsampling += [
-                nn.Conv2d(64, 576, (3, 3), (1, 1), (1, 1)),
-                nn.PixelShuffle(3),
-            ]
+            upsampling.append(UpsampleBlock(64, 3))
         self.upsampling = nn.Sequential(*upsampling)
 
         # Final output layer
         self.conv3 = nn.Conv2d(64, 3, (3, 3), (1, 1), (1, 1))
 
         self.register_buffer("mean", torch.Tensor([0.4488, 0.4371, 0.4040]).view(1, 3, 1, 1))
-        self.register_buffer("std", torch.Tensor([1.0, 1.0, 1.0]).view(1, 3, 1, 1))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # The images by subtracting the mean RGB value of the DIV2K dataset.
-        out = x.sub_(self.mean).div_(self.std)
+        out = x.sub_(self.mean).mul_(255.)
 
         out1 = self.conv1(out)
         out = self.trunk(out1)
@@ -137,6 +144,6 @@ class RCAN(nn.Module):
         out = self.upsampling(out)
         out = self.conv3(out)
 
-        out = out.mul_(self.std).add_(self.mean)
+        out = out.div_(255.).add_(self.mean)
 
         return out

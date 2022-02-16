@@ -15,22 +15,21 @@
 import torch
 from torch.backends import cudnn
 
-# ==============================================================================
-# General configuration
-# ==============================================================================
+# Random seed to maintain reproducible results
 torch.manual_seed(0)
-device = torch.device("cuda", 0)
+# Use GPU for training by default
+device = torch.device("cuda", 2)
+# Turning on when the image size does not change during training can speed up training
 cudnn.benchmark = True
+# Image magnification factor
 upscale_factor = 2
-mode = "train"
+# Current configuration parameter method
+mode = "valid"
+# Experiment name, easy to save weights and log files
 exp_name = "rcan_x2"
 
-# ==============================================================================
-# Training configuration
-# ==============================================================================
 if mode == "train":
     # Dataset
-    # Image format
     train_image_dir = f"data/DIV2K/RCAN/train"
     valid_image_dir = f"data/DIV2K/RCAN/valid"
 
@@ -55,15 +54,12 @@ if mode == "train":
     lr_scheduler_step_size = epochs // 5
     lr_scheduler_gamma = 0.5
 
-    print_frequency = 500
+    print_frequency = 100
 
-# ==============================================================================
-# Verify configuration
-# ==============================================================================
 if mode == "valid":
     # Test data address
     lr_dir = f"data/Set5/LRbicx{upscale_factor}"
     sr_dir = f"results/test/{exp_name}"
     hr_dir = f"data/Set5/GTmod12"
 
-    model_path = f"results/{exp_name}/last.pth"
+    model_path = f"results/{exp_name}/best.pth"

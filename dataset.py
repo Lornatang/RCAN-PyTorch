@@ -12,11 +12,8 @@
 # limitations under the License.
 # ==============================================================================
 """Realize the function of dataset preparation."""
-import io
 import os
 
-import lmdb
-import numpy as np
 from PIL import Image
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -42,28 +39,27 @@ class ImageDataset(Dataset):
 
     def __init__(self, dataroot: str, image_size: int, upscale_factor: int, mode: str) -> None:
         super(ImageDataset, self).__init__()
-        self.filenames = [os.path.join(dataroot, x) for x in os.listdir(dataroot)]
+        self.image_file_names = [os.path.join(dataroot, x) for x in os.listdir(dataroot)]
 
         if mode == "train":
-            self.hr_transforms = transforms.Compose([
-                transforms.RandomCrop(image_size),
-                transforms.RandomRotation([90, 270]),
-                transforms.RandomHorizontalFlip(0.5),
-            ])
+            self.hr_transforms = transforms.RandomCrop(image_size)
         elif mode == "valid":
             self.hr_transforms = transforms.CenterCrop(image_size)
         else:
             raise "Unsupported data processing model, please use `train` or `valid`."
 
-        self.lr_transforms = transforms.Resize(image_size // upscale_factor, interpolation=IMode.BICUBIC, antialias=True)
+        self.lr_transforms = transforms.Resize(image_size // upscale_factor, interpolation=IMode.BICUBIC)
 
     def __getitem__(self, batch_index: int) -> [Tensor, Tensor]:
         # Read a batch of image data
-        image = Image.open(self.filenames[batch_index])
+        image = Image.open(self.image_file_names[batch_index])
 
-        # Transform image
+        # Data augment
         hr_image = self.hr_transforms(image)
         lr_image = self.lr_transforms(hr_image)
+
+        lr_image, hr_image = imgproc.random_rotate(lr_image, hr_image, degrees=[0, 90, 180, 270])
+        lr_image, hr_image = imgproc.random_horizontally_flip(lr_image, hr_image, p=0.5)
 
         # Convert image data into Tensor stream format (PyTorch).
         # Note: The range of input and output is between [0, 1]
@@ -73,4 +69,4 @@ class ImageDataset(Dataset):
         return lr_tensor, hr_tensor
 
     def __len__(self) -> int:
-        return len(self.filenames)
+        return len(self.image_file_names)

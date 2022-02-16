@@ -31,10 +31,10 @@ def main() -> None:
     print("Build RCAN model successfully.")
 
     # Load the super-resolution model weights
-    print(f"Load SR model weights `{os.path.abspath(config.model_path)}`...")
+    print(f"Load RCAN model weights `{os.path.abspath(config.model_path)}`...")
     state_dict = torch.load(config.model_path, map_location=config.device)
     model.load_state_dict(state_dict)
-    print(f"Load SR model weights `{os.path.abspath(config.model_path)}` successfully.")
+    print(f"Load RCAN model weights `{os.path.abspath(config.model_path)}` successfully.")
 
     # Create a folder of super-resolution experiment results
     results_dir = os.path.join("results", "test", config.exp_name)
