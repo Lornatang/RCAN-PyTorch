@@ -12,39 +12,43 @@
 # limitations under the License.
 # ==============================================================================
 """Realize the parameter configuration function of dataset, model, training and verification code."""
+import random
+
+import numpy as np
 import torch
 from torch.backends import cudnn
 
 # Random seed to maintain reproducible results
+random.seed(0)
 torch.manual_seed(0)
+np.random.seed(0)
 # Use GPU for training by default
-device = torch.device("cuda", 2)
+device = torch.device("cuda", 0)
 # Turning on when the image size does not change during training can speed up training
 cudnn.benchmark = True
 # Image magnification factor
 upscale_factor = 2
 # Current configuration parameter method
-mode = "valid"
+mode = "train"
 # Experiment name, easy to save weights and log files
-exp_name = "rcan_x2"
+exp_name = "RCAN_x2"
 
 if mode == "train":
     # Dataset
     train_image_dir = f"data/DIV2K/RCAN/train"
     valid_image_dir = f"data/DIV2K/RCAN/valid"
+    test_image_dir = "data/Set5/GTmod8"
 
     image_size = int(upscale_factor * 48)
     batch_size = 16
     num_workers = 4
 
     # Incremental training and migration training
-    resume = False
-    strict = True
     start_epoch = 0
-    resume_weight = ""
+    resume = ""
 
     # Total num epochs
-    epochs = 500
+    epochs = 108
 
     # Adam optimizer parameter
     model_lr = 1e-4
@@ -62,4 +66,4 @@ if mode == "valid":
     sr_dir = f"results/test/{exp_name}"
     hr_dir = f"data/Set5/GTmod12"
 
-    model_path = f"results/{exp_name}/best.pth"
+    model_path = f"results/{exp_name}/best.pth.tar"

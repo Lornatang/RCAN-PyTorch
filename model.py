@@ -121,7 +121,7 @@ class RCAN(nn.Module):
 
         # Upsampling layers
         upsampling = []
-        if upscale_factor == 2 or upscale_factor == 4:
+        if upscale_factor == 2 or upscale_factor == 4 or upscale_factor == 8:
             for _ in range(int(math.log(upscale_factor, 2))):
                 upsampling.append(UpsampleBlock(64, 2))
         elif upscale_factor == 3:
