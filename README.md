@@ -76,7 +76,7 @@ so the number of iterations is only one-sixth of the original, which is 166,000 
 
 | Dataset | Scale |       PSNR       |
 |:-------:|:-----:|:----------------:|
-|  Set5   |   2   | 38.27(**37.59**) |
+|  Set5   |   2   | 38.27(**38.09**) |
 |  Set5   |   3   |   34.74(**-**)   |
 |  Set5   |   4   |   32.63(**-**)   |
 |  Set5   |   8   |   27.31(**-**)   |
