@@ -47,16 +47,16 @@ Contains DIV2K, DIV8K, Flickr2K, OST, T91, Set5, Set14, BSDS100 and BSDS200, etc
 
 Modify the contents of the file as follows.
 
-- line 30: `upscale_factor` change to the magnification you need to enlarge.
-- line 32: `mode` change Set to valid mode.
-- line 69: `model_path` change weight address after training.
+- line 29: `upscale_factor` change to the magnification you need to enlarge.
+- line 31: `mode` change Set to valid mode.
+- line 70: `model_path` change weight address after training.
 
 ## Train
 
 Modify the contents of the file as follows.
 
-- line 30: `upscale_factor` change to the magnification you need to enlarge.
-- line 32: `mode` change Set to train mode.
+- line 29: `upscale_factor` change to the magnification you need to enlarge.
+- line 31: `mode` change Set to train mode.
 
 If you want to load weights that you've trained before, modify the contents of the file as follows.
 
@@ -71,15 +71,12 @@ Source of original paper results: https://arxiv.org/pdf/1807.02758.pdf
 
 In the following table, the value in `()` indicates the result of the project, and `-` indicates no test.
 
-**Note: Because the training time is too long, the Batch size is set to 96 during training to accelerate training, 
-so the number of iterations is only one-sixth of the original, which is 166,000 iterations, not 1 million iterations.**
-
 | Dataset | Scale |       PSNR       |
 |:-------:|:-----:|:----------------:|
 |  Set5   |   2   | 38.27(**38.09**) |
-|  Set5   |   3   |   34.74(**-**)   |
-|  Set5   |   4   |   32.63(**-**)   |
-|  Set5   |   8   |   27.31(**-**)   |
+|  Set5   |   3   | 34.74(**34.56**) |
+|  Set5   |   4   | 32.63(**32.41**) |
+|  Set5   |   8   | 27.31(**26.97**) |
 
 Low Resolution / Super Resolution / High Resolution
 <span align="center"><img src="assets/result.png"/></span>
