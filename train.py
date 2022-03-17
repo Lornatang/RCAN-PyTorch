@@ -87,7 +87,7 @@ def main():
 
     for epoch in range(config.start_epoch, config.epochs):
         train(model, train_prefetcher, psnr_criterion, pixel_criterion, optimizer, epoch, scaler, writer)
-        # _ = validate(model, valid_prefetcher, psnr_criterion, epoch, writer, "Valid")
+        _ = validate(model, valid_prefetcher, psnr_criterion, epoch, writer, "Valid")
         psnr = validate(model, test_prefetcher, psnr_criterion, epoch, writer, "Test")
         print("\n")
 
