@@ -57,8 +57,8 @@ def main():
         # Load checkpoint model
         checkpoint = torch.load(config.resume, map_location=lambda storage, loc: storage)
         # Restore the parameters in the training node to this point
-        # config.start_epoch = checkpoint["epoch"]
-        # best_psnr = checkpoint["best_psnr"]
+        config.start_epoch = checkpoint["epoch"]
+        best_psnr = checkpoint["best_psnr"]
         # Load checkpoint state dict. Extract the fitted model weights
         model_state_dict = model.state_dict()
         new_state_dict = {k: v for k, v in checkpoint["state_dict"].items() if k in model_state_dict}
@@ -66,9 +66,9 @@ def main():
         model_state_dict.update(new_state_dict)
         model.load_state_dict(model_state_dict)
         # Load the optimizer model
-        # optimizer.load_state_dict(checkpoint["optimizer"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
         # Load the scheduler model
-        # scheduler.load_state_dict(checkpoint["scheduler"])
+        scheduler.load_state_dict(checkpoint["scheduler"])
         print("Loaded pretrained model weights.")
 
     # Create a folder of super-resolution experiment results
