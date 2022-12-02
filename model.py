@@ -14,19 +14,74 @@
 import math
 
 import torch
-from torch import nn
+from torch import nn, Tensor
 
 __all__ = [
-    "ChannelAttentionLayer", "ResidualChannelAttentionBlock", "ResidualGroup",
     "RCAN",
+    "rcan_x2", "rcan_x3", "rcan_x4", "rcan_x8",
 ]
 
 
-class ChannelAttentionLayer(nn.Module):
-    """Attention Mechanism Module"""
+class RCAN(nn.Module):
+    def __init__(
+            self,
+            in_channels: int,
+            out_channels: int,
+            channels: int,
+            reduction: int,
+            num_rcab: int,
+            num_rg: int,
+            upscale_factor: int,
+            rgb_mean: tuple = None,
+    ) -> None:
+        super(RCAN, self).__init__()
+        if rgb_mean is None:
+            rgb_mean = [0.4488, 0.4371, 0.4040]
 
+        # The first layer of convolutional layer
+        self.conv1 = nn.Conv2d(in_channels, channels, (3, 3), (1, 1), (1, 1))
+
+        # Feature extraction backbone
+        trunk = []
+        for _ in range(num_rg):
+            trunk.append(_ResidualGroup(channels, reduction, num_rcab))
+        self.trunk = nn.Sequential(*trunk)
+
+        # After the feature extraction network, reconnect a layer of convolutional blocks
+        self.conv2 = nn.Conv2d(channels, channels, (3, 3), (1, 1), (1, 1))
+
+        # Upsampling convolutional layer.
+        upsampling = []
+        if upscale_factor == 2 or upscale_factor == 4 or upscale_factor == 8:
+            for _ in range(int(math.log(upscale_factor, 2))):
+                upsampling.append(_UpsampleBlock(channels, 2))
+        elif upscale_factor == 3:
+            upsampling.append(_UpsampleBlock(channels, 3))
+        self.upsampling = nn.Sequential(*upsampling)
+
+        # Output layer.
+        self.conv3 = nn.Conv2d(channels, out_channels, (3, 3), (1, 1), (1, 1))
+
+        self.register_buffer("mean", Tensor(rgb_mean).view(1, 3, 1, 1))
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = x.sub_(self.mean).mul_(1.)
+
+        conv1 = self.conv1(x)
+        x = self.trunk(conv1)
+        x = self.conv2(x)
+        x = torch.add(x, conv1)
+        x = self.upsampling(x)
+        x = self.conv3(x)
+
+        x = x.div_(1.).add_(self.mean)
+
+        return x
+
+
+class _ChannelAttentionLayer(nn.Module):
     def __init__(self, channel: int, reduction: int):
-        super(ChannelAttentionLayer, self).__init__()
+        super(_ChannelAttentionLayer, self).__init__()
         self.channel_attention_layer = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(channel, channel // reduction, (1, 1), (1, 1), (0, 0)),
@@ -35,29 +90,25 @@ class ChannelAttentionLayer(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        identity = x
-
+    def forward(self, x: Tensor) -> Tensor:
         out = self.channel_attention_layer(x)
 
-        out = torch.mul(out, identity)
+        out = torch.mul(out, x)
 
         return out
 
 
-class ResidualChannelAttentionBlock(nn.Module):
-    """Residual Channel Attention Block (RCAB)"""
-
+class _ResidualChannelAttentionBlock(nn.Module):
     def __init__(self, channel: int, reduction: int):
-        super(ResidualChannelAttentionBlock, self).__init__()
+        super(_ResidualChannelAttentionBlock, self).__init__()
         self.residual_channel_attention_block = nn.Sequential(
             nn.Conv2d(channel, channel, (3, 3), (1, 1), (1, 1)),
             nn.ReLU(True),
             nn.Conv2d(channel, channel, (3, 3), (1, 1), (1, 1)),
-            ChannelAttentionLayer(channel, reduction),
+            _ChannelAttentionLayer(channel, reduction),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         identity = x
 
         out = self.residual_channel_attention_block(x)
@@ -67,20 +118,18 @@ class ResidualChannelAttentionBlock(nn.Module):
         return out
 
 
-class ResidualGroup(nn.Module):
-    """Residual Group (RG)"""
-
-    def __init__(self, channel: int, reduction: int):
-        super(ResidualGroup, self).__init__()
+class _ResidualGroup(nn.Module):
+    def __init__(self, channel: int, reduction: int, num_rcab: int):
+        super(_ResidualGroup, self).__init__()
         residual_group = []
 
-        for _ in range(20):
-            residual_group.append(ResidualChannelAttentionBlock(channel, reduction))
+        for _ in range(num_rcab):
+            residual_group.append(_ResidualChannelAttentionBlock(channel, reduction))
         residual_group.append(nn.Conv2d(channel, channel, (3, 3), (1, 1), (1, 1)))
 
         self.residual_group = nn.Sequential(*residual_group)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: Tensor) -> Tensor:
         identity = x
 
         out = self.residual_group(x)
@@ -90,60 +139,39 @@ class ResidualGroup(nn.Module):
         return out
 
 
-class UpsampleBlock(nn.Module):
+class _UpsampleBlock(nn.Module):
     def __init__(self, channels: int, upscale_factor: int) -> None:
-        super(UpsampleBlock, self).__init__()
+        super(_UpsampleBlock, self).__init__()
         self.upsample_block = nn.Sequential(
             nn.Conv2d(channels, channels * upscale_factor * upscale_factor, (3, 3), (1, 1), (1, 1)),
             nn.PixelShuffle(upscale_factor),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.upsample_block(x)
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.upsample_block(x)
 
-        return out
+        return x
 
 
-class RCAN(nn.Module):
-    def __init__(self, upscale_factor: int):
-        super(RCAN, self).__init__()
-        # First layer
-        self.conv1 = nn.Conv2d(3, 64, (3, 3), (1, 1), (1, 1))
+def rcan_x2(**kwargs) -> RCAN:
+    model = RCAN(3, 3, 64, 16, 10, 20, 2, **kwargs)
 
-        # Residual Group
-        trunk = []
-        for _ in range(10):
-            trunk.append(ResidualGroup(64, 16))
-        self.trunk = nn.Sequential(*trunk)
+    return model
 
-        # Second layer
-        self.conv2 = nn.Conv2d(64, 64, (3, 3), (1, 1), (1, 1))
 
-        # Upsampling layers
-        upsampling = []
-        if upscale_factor == 2 or upscale_factor == 4 or upscale_factor == 8:
-            for _ in range(int(math.log(upscale_factor, 2))):
-                upsampling.append(UpsampleBlock(64, 2))
-        elif upscale_factor == 3:
-            upsampling.append(UpsampleBlock(64, 3))
-        self.upsampling = nn.Sequential(*upsampling)
+def rcan_x3(**kwargs) -> RCAN:
+    model = RCAN(3, 3, 64, 16, 10, 20, 3, **kwargs)
 
-        # Final output layer
-        self.conv3 = nn.Conv2d(64, 3, (3, 3), (1, 1), (1, 1))
+    return model
 
-        self.register_buffer("mean", torch.Tensor([0.4488, 0.4371, 0.4040]).view(1, 3, 1, 1))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # The images by subtracting the mean RGB value of the DIV2K dataset.
-        out = x.sub_(self.mean).mul_(255.)
+def rcan_x4(**kwargs) -> RCAN:
+    model = RCAN(3, 3, 64, 16, 10, 20, 4, **kwargs)
 
-        out1 = self.conv1(out)
-        out = self.trunk(out1)
-        out = self.conv2(out)
-        out = torch.add(out, out1)
-        out = self.upsampling(out)
-        out = self.conv3(out)
+    return model
 
-        out = out.div_(255.).add_(self.mean)
 
-        return out
+def rcan_x8(**kwargs) -> RCAN:
+    model = RCAN(3, 3, 64, 16, 10, 20, 8, **kwargs)
+
+    return model

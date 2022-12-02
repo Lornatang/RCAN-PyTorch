@@ -22,48 +22,62 @@ random.seed(0)
 torch.manual_seed(0)
 np.random.seed(0)
 # Use GPU for training by default
-device = torch.device("cuda", 0)
+device = torch.device("cuda", 2)
 # Turning on when the image size does not change during training can speed up training
 cudnn.benchmark = True
-# Image magnification factor
-upscale_factor = 2
+# When evaluating the performance of the SR model, whether to verify only the Y channel image data
+only_test_y_channel = True
+# Model architecture name
+model_arch_name = "rcan_x4"
+# Upscale factor
+upscale_factor = 4
 # Current configuration parameter method
 mode = "train"
 # Experiment name, easy to save weights and log files
-exp_name = "RCAN_x2"
+exp_name = "RCAN_x4-DIV2K"
 
 if mode == "train":
-    # Dataset
-    train_image_dir = f"data/DIV2K/RCAN/train"
-    valid_image_dir = f"data/DIV2K/RCAN/valid"
-    test_lr_image_dir = f"data/Set5/LRbicx{upscale_factor}"
-    test_hr_image_dir = f"data/Set5/GTmod12"
+    train_gt_images_dir = f"./data/DIV2K/RCAN/train"
 
-    image_size = int(upscale_factor * 48)
+    test_gt_images_dir = f"./data/Set5/GTmod12"
+    test_lr_images_dir = f"./data/Set5/LRbicx{upscale_factor}"
+
+    train_gt_image_size = int(upscale_factor * 48)
     batch_size = 16
     num_workers = 4
 
+    # Load the address of the pretrained model
+    pretrained_model_weights_path = f""
+
     # Incremental training and migration training
-    start_epoch = 0
-    resume = ""
+    resume_model_weights_path = f""
 
     # Total num epochs
-    epochs = 515
+    epochs = 1000
 
-    # Adam optimizer parameter
+    # Loss function weight
+    loss_weight = [1.0]
+
+    # Optimizer parameter
     model_lr = 1e-4
-    model_betas = (0.9, 0.999)
+    model_betas = (0.9, 0.99)
+    model_eps = 1e-4  # Keep no nan
+    model_weight_decay = 0.0
+
+    # EMA parameter
+    model_ema_decay = 0.999
 
     # StepLR scheduler parameter
     lr_scheduler_step_size = epochs // 5
     lr_scheduler_gamma = 0.5
 
-    print_frequency = 100
+    # How many iterations to print the training result
+    train_print_frequency = 100
+    test_print_frequency = 1
 
-if mode == "valid":
-    # Test data address
-    lr_dir = f"data/Set5/LRbicx{upscale_factor}"
-    sr_dir = f"results/test/{exp_name}"
-    hr_dir = f"data/Set5/GTmod12"
+if mode == "test":
+    test_gt_images_dir = f"./data/Set5/GTmod12"
+    test_sr_images_dir = f"./results/test/{exp_name}"
+    test_lr_images_dir = f"./data/Set5/LRbicx{upscale_factor}"
 
-    model_path = f"results/{exp_name}/best.pth.tar"
+    model_weights_path = f"./results/pretrained_models/RCAN_x4-DIV2K-2dfffdd2.pth.tar"

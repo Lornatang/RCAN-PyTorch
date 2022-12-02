@@ -1,7 +1,7 @@
-opencv-python
-numpy
-tqdm
-torch
-setuptools
-torchvision
-natsort
+opencv-python>=4.6.0.66
+numpy>=1.23.5
+tqdm>=4.63.1
+torch>=1.13.0+cu117
+natsort>=8.1.0
+typing>=3.7.4.3
+scipy>=1.9.3

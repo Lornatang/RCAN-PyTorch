@@ -11,124 +11,158 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""File description: Realize the model training function."""
 import os
-import shutil
 import time
-from enum import Enum
 
-import numpy as np
 import torch
-from torch import nn
-from torch import optim
+from torch import nn, optim
 from torch.cuda import amp
 from torch.optim import lr_scheduler
+from torch.optim.swa_utils import AveragedModel
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 import config
-import imgproc
-from dataset import CUDAPrefetcher
-from dataset import TrainValidImageDataset, TestImageDataset
-from model import RCAN
+import model
+from dataset import CUDAPrefetcher, TrainImageDataset, TestImageDataset
+from test import test
+from utils import build_iqa_model, load_state_dict, make_directory, save_checkpoint, AverageMeter, ProgressMeter
 
 
 def main():
+    # Initialize the gradient scaler
+    scaler = amp.GradScaler()
+
+    # Initialize the number of training epochs
+    start_epoch = 0
+
     # Initialize training to generate network evaluation indicators
     best_psnr = 0.0
+    best_ssim = 0.0
 
-    train_prefetcher, valid_prefetcher, test_prefetcher = load_dataset()
-    print("Load train dataset and valid dataset successfully.")
+    train_data_prefetcher, test_data_prefetcher = load_dataset(config.train_gt_images_dir,
+                                                               config.train_gt_image_size,
+                                                               config.test_gt_images_dir,
+                                                               config.test_lr_images_dir,
+                                                               config.upscale_factor,
+                                                               config.batch_size,
+                                                               config.num_workers,
+                                                               config.device)
+    print("Load all datasets successfully.")
 
-    model = build_model()
-    print("Build RCAN model successfully.")
+    sr_model, ema_sr_model = build_model(config.model_arch_name, config.device)
+    print(f"Build `{config.model_arch_name}` model successfully.")
 
-    psnr_criterion, pixel_criterion = define_loss()
+    criterion = define_loss(config.device)
     print("Define all loss functions successfully.")
 
-    optimizer = define_optimizer(model)
+    optimizer = define_optimizer(sr_model)
     print("Define all optimizer functions successfully.")
 
     scheduler = define_scheduler(optimizer)
-    print("Define all optimizer scheduler successfully.")
+    print("Define all optimizer scheduler functions successfully.")
 
-    print("Check whether the pretrained model is restored...")
-    if config.resume:
-        # Load checkpoint model
-        checkpoint = torch.load(config.resume, map_location=lambda storage, loc: storage)
-        # Restore the parameters in the training node to this point
-        config.start_epoch = checkpoint["epoch"]
-        best_psnr = checkpoint["best_psnr"]
-        # Load checkpoint state dict. Extract the fitted model weights
-        model_state_dict = model.state_dict()
-        new_state_dict = {k: v for k, v in checkpoint["state_dict"].items() if k in model_state_dict}
-        # Overwrite the pretrained model weights to the current model
-        model_state_dict.update(new_state_dict)
-        model.load_state_dict(model_state_dict)
-        # Load the optimizer model
-        optimizer.load_state_dict(checkpoint["optimizer"])
-        # Load the scheduler model
-        scheduler.load_state_dict(checkpoint["scheduler"])
-        print("Loaded pretrained model weights.")
+    # Create an IQA evaluation model
+    psnr_model, ssim_model = build_iqa_model(config.upscale_factor, config.only_test_y_channel, config.device)
 
-    # Create a folder of super-resolution experiment results
+    print("Check whether to load pretrained model weights...")
+    if config.pretrained_model_weights_path:
+        sr_model = load_state_dict(sr_model, config.pretrained_model_weights_path)
+        print(f"Loaded `{config.pretrained_model_weights_path}` pretrained model weights successfully.")
+    else:
+        print("Pretrained model weights not found.")
+
+    print("Check whether the resume model is restored...")
+    if config.resume_model_weights_path:
+        sr_model, ema_sr_model, start_epoch, best_psnr, best_ssim, optimizer, scheduler = load_state_dict(
+            sr_model,
+            config.pretrained_model_weights_path,
+            ema_sr_model,
+            optimizer,
+            scheduler,
+            "resume")
+        print("Loaded resume model weights.")
+    else:
+        print("Resume training model not found. Start training from scratch.")
+
+    # Create a experiment results
     samples_dir = os.path.join("samples", config.exp_name)
     results_dir = os.path.join("results", config.exp_name)
-    if not os.path.exists(samples_dir):
-        os.makedirs(samples_dir)
-    if not os.path.exists(results_dir):
-        os.makedirs(results_dir)
+    make_directory(samples_dir)
+    make_directory(results_dir)
 
     # Create training process log file
     writer = SummaryWriter(os.path.join("samples", "logs", config.exp_name))
 
-    # Initialize the gradient scaler
-    scaler = amp.GradScaler()
+    for epoch in range(start_epoch, config.epochs):
+        train(sr_model,
+              ema_sr_model,
+              train_data_prefetcher,
+              criterion,
+              optimizer,
+              epoch,
+              scaler,
+              writer,
+              config.device,
+              config.train_print_frequency)
+        psnr, ssim = test(sr_model,
+                          test_data_prefetcher,
+                          psnr_model,
+                          ssim_model,
+                          config.device,
+                          config.test_print_frequency)
 
-    for epoch in range(config.start_epoch, config.epochs):
-        train(model, train_prefetcher, psnr_criterion, pixel_criterion, optimizer, epoch, scaler, writer)
-        _ = validate(model, valid_prefetcher, psnr_criterion, epoch, writer, "Valid")
-        psnr = validate(model, test_prefetcher, psnr_criterion, epoch, writer, "Test")
+        # Write the evaluation results to the tensorboard
+        writer.add_scalar(f"Test/PSNR", psnr, epoch + 1)
+        writer.add_scalar(f"Test/SSIM", ssim, epoch + 1)
+
         print("\n")
 
-        # Update lr
+        # Update LR
         scheduler.step()
 
         # Automatically save the model with the highest index
-        is_best = psnr > best_psnr
+        is_best = psnr > best_psnr and ssim > best_ssim
+        is_last = (epoch + 1) == config.epochs
         best_psnr = max(psnr, best_psnr)
-        torch.save({"epoch": epoch + 1,
-                    "best_psnr": best_psnr,
-                    "state_dict": model.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "scheduler": scheduler.state_dict()},
-                   os.path.join(samples_dir, f"epoch_{epoch + 1}.pth.tar"))
-        if is_best:
-            shutil.copyfile(os.path.join(samples_dir, f"epoch_{epoch + 1}.pth.tar"), os.path.join(results_dir, "best.pth.tar"))
-        if (epoch + 1) == config.epochs:
-            shutil.copyfile(os.path.join(samples_dir, f"epoch_{epoch + 1}.pth.tar"), os.path.join(results_dir, "last.pth.tar"))
+        best_ssim = max(ssim, best_ssim)
+        save_checkpoint({"epoch": epoch + 1,
+                         "best_psnr": best_psnr,
+                         "best_ssim": best_ssim,
+                         "state_dict": sr_model.state_dict(),
+                         "ema_state_dict": ema_sr_model.state_dict(),
+                         "optimizer": optimizer.state_dict(),
+                         "scheduler": scheduler.state_dict()},
+                        f"epoch_{epoch + 1}.pth.tar",
+                        samples_dir,
+                        results_dir,
+                        "best.pth.tar",
+                        "last.pth.tar",
+                        is_best,
+                        is_last)
 
 
-def load_dataset() -> [CUDAPrefetcher, CUDAPrefetcher, CUDAPrefetcher]:
+def load_dataset(
+        train_gt_images_dir: str,
+        train_gt_image_size: int,
+        test_gt_images_dir: str,
+        test_lr_images_dir: str,
+        upscale_factor: int,
+        batch_size: int,
+        num_workers: int,
+        device: torch.device,
+) -> [CUDAPrefetcher, CUDAPrefetcher]:
     # Load train, test and valid datasets
-    train_datasets = TrainValidImageDataset(config.train_image_dir, config.image_size, config.upscale_factor, "Train")
-    valid_datasets = TrainValidImageDataset(config.valid_image_dir, config.image_size, config.upscale_factor, "Valid")
-    test_datasets = TestImageDataset(config.test_lr_image_dir, config.test_hr_image_dir)
+    train_datasets = TrainImageDataset(train_gt_images_dir, train_gt_image_size, upscale_factor)
+    test_datasets = TestImageDataset(test_gt_images_dir, test_lr_images_dir)
 
     # Generator all dataloader
     train_dataloader = DataLoader(train_datasets,
-                                  batch_size=config.batch_size,
+                                  batch_size=batch_size,
                                   shuffle=True,
-                                  num_workers=config.num_workers,
+                                  num_workers=num_workers,
                                   pin_memory=True,
                                   drop_last=True,
-                                  persistent_workers=True)
-    valid_dataloader = DataLoader(valid_datasets,
-                                  batch_size=1,
-                                  shuffle=False,
-                                  num_workers=1,
-                                  pin_memory=True,
-                                  drop_last=False,
                                   persistent_workers=True)
     test_dataloader = DataLoader(test_datasets,
                                  batch_size=1,
@@ -139,72 +173,99 @@ def load_dataset() -> [CUDAPrefetcher, CUDAPrefetcher, CUDAPrefetcher]:
                                  persistent_workers=False)
 
     # Place all data on the preprocessing data loader
-    train_prefetcher = CUDAPrefetcher(train_dataloader, config.device)
-    valid_prefetcher = CUDAPrefetcher(valid_dataloader, config.device)
-    test_prefetcher = CUDAPrefetcher(test_dataloader, config.device)
+    train_prefetcher = CUDAPrefetcher(train_dataloader, device)
+    test_prefetcher = CUDAPrefetcher(test_dataloader, device)
 
-    return train_prefetcher, valid_prefetcher, test_prefetcher
-
-
-def build_model() -> nn.Module:
-    model = RCAN(config.upscale_factor).to(config.device)
-
-    return model
+    return train_prefetcher, test_prefetcher
 
 
-def define_loss() -> [nn.MSELoss, nn.L1Loss]:
-    psnr_criterion = nn.MSELoss().to(config.device)
-    pixel_criterion = nn.L1Loss().to(config.device)
+def build_model(model_arch_name: str, device: torch.device) -> [nn.Module, nn.Module]:
+    # Build model
+    sr_model = model.__dict__[model_arch_name]()
+    # Generate exponential average model, stabilize model training
+    ema_avg_fn = lambda averaged_model_parameter, model_parameter, num_averaged: (1 - config.model_ema_decay) * averaged_model_parameter + config.model_ema_decay * model_parameter
+    ema_sr_model = AveragedModel(sr_model, avg_fn=ema_avg_fn)
 
-    return psnr_criterion, pixel_criterion
+    sr_model = sr_model.to(device=device)
+    ema_sr_model = ema_sr_model.to(device=device)
+
+    return sr_model, ema_sr_model
 
 
-def define_optimizer(model) -> optim.Adam:
-    optimizer = optim.Adam(model.parameters(), lr=config.model_lr, betas=config.model_betas)
+def define_loss(device) -> nn.L1Loss:
+    criterion = nn.L1Loss().to(device=device)
+
+    return criterion
+
+
+def define_optimizer(sr_model: nn.Module) -> optim.Adam:
+    optimizer = optim.Adam(sr_model.parameters(),
+                           config.model_lr,
+                           config.model_betas,
+                           config.model_eps)
 
     return optimizer
 
 
-def define_scheduler(optimizer) -> lr_scheduler.MultiStepLR:
-    scheduler = lr_scheduler.StepLR(optimizer, step_size=config.lr_scheduler_step_size, gamma=config.lr_scheduler_gamma)
+def define_scheduler(optimizer) -> lr_scheduler.StepLR:
+    scheduler = lr_scheduler.StepLR(optimizer,
+                                    config.lr_scheduler_step_size,
+                                    config.lr_scheduler_gamma)
 
     return scheduler
 
 
-def train(model, train_prefetcher, psnr_criterion, pixel_criterion, optimizer, epoch, scaler, writer) -> None:
+def train(
+        sr_model: nn.Module,
+        ema_sr_model: nn.Module,
+        train_data_prefetcher: CUDAPrefetcher,
+        criterion: nn.L1Loss,
+        optimizer: optim.Adam,
+        epoch: int,
+        scaler: amp.GradScaler,
+        writer: SummaryWriter,
+        device: torch.device = torch.device("cpu"),
+        print_frequency: int = 1,
+) -> None:
     # Calculate how many iterations there are under epoch
-    batches = len(train_prefetcher)
-
+    batches = len(train_data_prefetcher)
+    # Progress bar print information
     batch_time = AverageMeter("Time", ":6.3f")
     data_time = AverageMeter("Data", ":6.3f")
     losses = AverageMeter("Loss", ":6.6f")
     psnres = AverageMeter("PSNR", ":4.2f")
-    progress = ProgressMeter(batches, [batch_time, data_time, losses, psnres], prefix=f"Epoch: [{epoch + 1}]")
+    progress = ProgressMeter(batches, [batch_time, data_time, losses, psnres], prefix=f"Epoch: Train")
 
     # Put the generator in training mode
-    model.train()
+    sr_model.train()
 
+    # Define loss function weights
+    loss_weight = torch.Tensor(config.loss_weight).to(device=device)
+
+    # Initialize data batches
     batch_index = 0
-
-    # Calculate the time it takes to test a batch of data
+    # Set the dataset iterator pointer to 0
+    train_data_prefetcher.reset()
+    # Record the start time of training a batch
     end = time.time()
-    # enable preload
-    train_prefetcher.reset()
-    batch_data = train_prefetcher.next()
+    # load the first batch of data
+    batch_data = train_data_prefetcher.next()
+
     while batch_data is not None:
-        # measure data loading time
+        gt = batch_data["gt"].to(config.device, non_blocking=True)
+        lr = batch_data["lr"].to(config.device, non_blocking=True)
+
+        # Record the data loading time for training a batch
         data_time.update(time.time() - end)
 
-        lr = batch_data["lr"].to(config.device, non_blocking=True)
-        hr = batch_data["hr"].to(config.device, non_blocking=True)
-
         # Initialize the generator gradient
-        model.zero_grad()
+        sr_model.zero_grad(set_to_none=True)
 
         # Mixed precision training
         with amp.autocast():
-            sr = model(lr)
-            loss = pixel_criterion(sr, hr)
+            sr = sr_model(lr)
+            loss = criterion(sr, gt)
+            loss = torch.sum(torch.mul(loss_weight, loss))
 
         # Gradient zoom
         scaler.scale(loss).backward()
@@ -213,164 +274,27 @@ def train(model, train_prefetcher, psnr_criterion, pixel_criterion, optimizer, e
         scaler.step(optimizer)
         scaler.update()
 
-        # measure accuracy and record loss
-        psnr = 10. * torch.log10(1. / psnr_criterion(sr, hr))
-        losses.update(loss.item(), lr.size(0))
-        psnres.update(psnr.item(), lr.size(0))
+        # update exponentially averaged model weights
+        ema_sr_model.update_parameters(sr_model)
 
-        # measure elapsed time
+        # record the loss value
+        losses.update(loss.item(), lr.size(0))
+
+        # Record the total time of training a batch
         batch_time.update(time.time() - end)
         end = time.time()
 
-        # Record training log information
-        if batch_index % config.print_frequency == 0:
-            # Writer Loss to file
+        # Output training log information once
+        if batch_index % print_frequency == 0:
+            # Write training log information to tensorboard
             writer.add_scalar("Train/Loss", loss.item(), batch_index + epoch * batches + 1)
             progress.display(batch_index)
 
         # Preload the next batch of data
-        batch_data = train_prefetcher.next()
+        batch_data = train_data_prefetcher.next()
 
-        # After a batch of data is calculated, add 1 to the number of batches
+        # Add 1 to the number of data batches
         batch_index += 1
-
-
-def validate(model, valid_prefetcher, psnr_criterion, epoch, writer, mode) -> float:
-    batch_time = AverageMeter("Time", ":6.3f")
-    psnres = AverageMeter("PSNR", ":4.2f")
-    progress = ProgressMeter(len(valid_prefetcher), [batch_time, psnres], prefix="Valid: ")
-
-    # Put the model in verification mode
-    model.eval()
-
-    batch_index = 0
-
-    # Calculate the time it takes to test a batch of data
-    end = time.time()
-    with torch.no_grad():
-        # enable preload
-        valid_prefetcher.reset()
-        batch_data = valid_prefetcher.next()
-
-        while batch_data is not None:
-            # measure data loading time
-            lr = batch_data["lr"].to(config.device, non_blocking=True)
-            hr = batch_data["hr"].to(config.device, non_blocking=True)
-
-            # Mixed precision
-            with amp.autocast():
-                sr = model(lr)
-
-            # Convert RGB tensor to Y tensor
-            sr_image = imgproc.tensor2image(sr, range_norm=False, half=True)
-            sr_image = sr_image.astype(np.float32) / 255.
-            sr_y_image = imgproc.rgb2ycbcr(sr_image, use_y_channel=True)
-            sr_y_tensor = imgproc.image2tensor(sr_y_image, range_norm=False, half=True).to(config.device).unsqueeze_(0)
-
-            hr_image = imgproc.tensor2image(hr, range_norm=False, half=True)
-            hr_image = hr_image.astype(np.float32) / 255.
-            hr_y_image = imgproc.rgb2ycbcr(hr_image, use_y_channel=True)
-            hr_y_tensor = imgproc.image2tensor(hr_y_image, range_norm=False, half=True).to(config.device).unsqueeze_(0)
-
-            # measure accuracy and record loss
-            psnr = 10. * torch.log10(1. / psnr_criterion(sr_y_tensor, hr_y_tensor))
-            psnres.update(psnr.item(), lr.size(0))
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            # Record training log information
-            if batch_index % config.print_frequency == 0:
-                progress.display(batch_index)
-
-            # Preload the next batch of data
-            batch_data = valid_prefetcher.next()
-
-            # After a batch of data is calculated, add 1 to the number of batches
-            batch_index += 1
-
-    # Print average PSNR metrics
-    progress.display_summary()
-
-    if mode == "Valid":
-        writer.add_scalar("Valid/PSNR", psnres.avg, epoch + 1)
-    elif mode == "Test":
-        writer.add_scalar("Test/PSNR", psnres.avg, epoch + 1)
-    else:
-        raise ValueError("Unsupported mode, please use `Valid` or `Test`.")
-
-    return psnres.avg
-
-
-# Copy form "https://github.com/pytorch/examples/blob/master/imagenet/main.py"
-class Summary(Enum):
-    NONE = 0
-    AVERAGE = 1
-    SUM = 2
-    COUNT = 3
-
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self, name, fmt=":f", summary_type=Summary.AVERAGE):
-        self.name = name
-        self.fmt = fmt
-        self.summary_type = summary_type
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-    def __str__(self):
-        fmtstr = "{name} {val" + self.fmt + "} ({avg" + self.fmt + "})"
-        return fmtstr.format(**self.__dict__)
-
-    def summary(self):
-        if self.summary_type is Summary.NONE:
-            fmtstr = ""
-        elif self.summary_type is Summary.AVERAGE:
-            fmtstr = "{name} {avg:.2f}"
-        elif self.summary_type is Summary.SUM:
-            fmtstr = "{name} {sum:.2f}"
-        elif self.summary_type is Summary.COUNT:
-            fmtstr = "{name} {count:.2f}"
-        else:
-            raise ValueError(f"Invalid summary type {self.summary_type}")
-
-        return fmtstr.format(**self.__dict__)
-
-
-class ProgressMeter(object):
-    def __init__(self, num_batches, meters, prefix=""):
-        self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
-        self.meters = meters
-        self.prefix = prefix
-
-    def display(self, batch):
-        entries = [self.prefix + self.batch_fmtstr.format(batch)]
-        entries += [str(meter) for meter in self.meters]
-        print("\t".join(entries))
-
-    def display_summary(self):
-        entries = [" *"]
-        entries += [meter.summary() for meter in self.meters]
-        print(" ".join(entries))
-
-    def _get_batch_fmtstr(self, num_batches):
-        num_digits = len(str(num_batches // 1))
-        fmt = "{:" + str(num_digits) + "d}"
-        return "[" + fmt + "/" + fmt.format(num_batches) + "]"
 
 
 if __name__ == "__main__":
