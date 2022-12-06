@@ -154,24 +154,24 @@ class _UpsampleBlock(nn.Module):
 
 
 def rcan_x2(**kwargs) -> RCAN:
-    model = RCAN(3, 3, 64, 16, 10, 20, 2, **kwargs)
+    model = RCAN(3, 3, 64, 16, 20, 10, 2, **kwargs)
 
     return model
 
 
 def rcan_x3(**kwargs) -> RCAN:
-    model = RCAN(3, 3, 64, 16, 10, 20, 3, **kwargs)
+    model = RCAN(3, 3, 64, 16, 20, 10, 3, **kwargs)
 
     return model
 
 
 def rcan_x4(**kwargs) -> RCAN:
-    model = RCAN(3, 3, 64, 16, 10, 20, 4, **kwargs)
+    model = RCAN(3, 3, 64, 16, 20, 10, 4, **kwargs)
 
     return model
 
 
 def rcan_x8(**kwargs) -> RCAN:
-    model = RCAN(3, 3, 64, 16, 10, 20, 8, **kwargs)
+    model = RCAN(3, 3, 64, 16, 20, 10, 8, **kwargs)
 
     return model
