@@ -233,7 +233,7 @@ def train(
     batch_time = AverageMeter("Time", ":6.3f")
     data_time = AverageMeter("Data", ":6.3f")
     losses = AverageMeter("Loss", ":6.6f")
-    progress = ProgressMeter(batches, [batch_time, data_time, losses], prefix=f"Epoch: {epoch}")
+    progress = ProgressMeter(batches, [batch_time, data_time, losses], prefix=f"Epoch: [{epoch}]")
 
     # Put the generator in training mode
     sr_model.train()
